@@ -64,14 +64,17 @@ predict_and_create_submission <- function(model, test_data){
     PREDICTED_TARGET = predictions
   )
   
-  write.csv(submission, file= paste("submissions", Sys.time(), ".csv", sep=""))
+  write.csv(submission,quote=FALSE,row.names=FALSE, file= paste("submissions/", Sys.time(), ".csv", sep=""))
+  
+  return(submission)
 }
+
 ```
 
 ```{r}
 m <- train_model(train_data %>% sample_n(10000), "rf")
 evaluate_performance(m$pred$pred, m$pred$obs)
-predict_and_create_submission(m, test_data)
+submission <- predict_and_create_submission(m, test_data)
 ```
 
 ```{r}
