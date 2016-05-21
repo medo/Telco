@@ -1,0 +1,85 @@
+---
+title: "Traffic Data Analysis"
+output: html_document
+---
+
+```{r}
+library(ggplot2)
+library(tidyr)
+library(dplyr)
+library(knitr)
+library(caret)
+library(corrgram)
+```
+
+```{r}
+roaming_data <- read.csv("data/roaming_monthly.csv")
+contract_data <- read.csv("data/contract_clean.csv")
+test_data <- read.csv("data/test.csv")
+train_data <- read.csv("data/train.csv")
+roaming_data <- read.csv("data/roaming_monthly.csv")
+daily_aggregate <- read.csv("data/daily_aggregate.csv")
+
+train_data <- train_data %>% mutate(TARGET=as.factor(TARGET)) 
+```
+
+```{r}
+fitControl <- trainControl(method = "repeatedcv",
+                           number = 10,
+                           repeats = 1,
+                           savePredictions = TRUE
+                          )
+
+train_model <- function(data, method){
+  model <- train(data %>% select(-TARGET) %>% select(-CONTRACT_KEY), (data %>% select(TARGET))[,1], method=method, trControl = fitControl)
+}
+
+evaluate_performance <- function(predicted, actual) {
+  cmat <- confusionMatrix(predicted, actual)$table
+
+  TP <- cmat[1,1]
+  FN <- cmat[1,2]
+  FP <- cmat[2,1]
+  TN <- cmat[2,2]
+
+  ret <- list(
+    Accuracy = (TP+TN)/(TP+FN+FP+TN),
+    Precision = (TP/(TP+FP)),
+    Recall = (TP/(TP+FN))
+  )
+
+  ret$F1 <- (2*ret$Precision*ret$Recall)/(ret$Precision + ret$Recall)
+  return(ret)
+}
+
+
+predict_and_create_submission <- function(model, test_data){
+  
+  test_data_without_contract_key <- test_data %>% select(-CONTRACT_KEY)
+  CONTRACT_KEYS <- test_data %>% select(CONTRACT_KEY)
+  predictions <- predict(model, test_data_without_contract_key)
+  
+  submission <- data.frame(
+    CONTRACT_KEY = CONTRACT_KEYS,
+    PREDICTED_TARGET = predictions
+  )
+  
+  write.csv(submission, file= paste("submissions", Sys.time(), ".csv", sep=""))
+}
+```
+
+```{r}
+m <- train_model(train_data %>% sample_n(10000), "rf")
+evaluate_performance(m$pred$pred, m$pred$obs)
+predict_and_create_submission(m, test_data)
+```
+
+```{r}
+
+train_contract_data <- inner_join(train_data, contract_data, by="CONTRACT_KEY") 
+
+hot_encode_train_contract <- model.matrix(HANDSET_NAME ~ . + 0, data=train_contract_data) %>% as.data.frame
+
+tcc <- cor(hot_encode_train_contract %>% select(-CONTRACT_KEY),  use="complete.obs")
+corrgram(tcc)
+```
