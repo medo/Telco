@@ -28,12 +28,15 @@ train_data <- train_data %>% mutate(TARGET=as.factor(TARGET))
 fitControl <- trainControl(method = "repeatedcv",
                            number = 3,
                            repeats = 1,
-                           savePredictions = TRUE
+                           savePredictions = TRUE,
+                           classProbs = TRUE,
+                           returnResamp='none',
+                           summaryFunction= twoClassSummary
                           )
 
-train_model <- function(data, method){
+train_model <- function(data, method, grid){
 
-  model <- train(data %>% dplyr::select(-TARGET,-CONTRACT_KEY), (data %>% dplyr::select(TARGET))[,1], method=method, trControl = fitControl)
+  model <- train(data %>% dplyr::select(-TARGET,-CONTRACT_KEY), (data %>% dplyr::select(TARGET))[,1], method=method, trControl = fitControl, tuneGrid = grid, metric="ROC")
 }
 
 predict_and_create_submission <- function(model, test_data){
@@ -54,8 +57,32 @@ predict_and_create_submission <- function(model, test_data){
 ```
 
 ```{r}
+prepare_roaming_data <- function(data){
+  
+  ret_data <- data %>% mutate(CALL_MONTH_KEY=paste("USAGE_", CALL_MONTH_KEY, sep="")) %>% spread(CALL_MONTH_KEY, USAGE, 0) %>% mutate(SESSIONS_206 = ifelse(USAGE_206 > 0, SESSION_COUNT, 0),SESSIONS_207 = ifelse(USAGE_207 > 0, SESSION_COUNT, 0),SESSIONS_208 = ifelse(USAGE_208 > 0, SESSION_COUNT, 0),SESSIONS_209 = ifelse(USAGE_209 > 0, SESSION_COUNT, 0),SESSIONS_210 = ifelse(USAGE_210 > 0, SESSION_COUNT, 0)) %>% ddply(.(CONTRACT_KEY), summarize, USAGE_206=sum(USAGE_206), USAGE_207=sum(USAGE_207), USAGE_208=sum(USAGE_208), USAGE_209=sum(USAGE_209), USAGE_210=sum(USAGE_210), SESSIONS_206=sum(SESSIONS_206), SESSIONS_207=sum(SESSIONS_207), SESSIONS_208=sum(SESSIONS_208), SESSIONS_209=sum(SESSIONS_209), SESSIONS_210=sum(SESSIONS_210))
+  
+  return(ret_data)
+}
+
+```
+
+```{r}
 prepare_dataset <- function(data) {
   ret_data <- inner_join(data, contract_data, by="CONTRACT_KEY") 
+  
+  # Adding roaming data
+  roaming_data_tmp <- prepare_roaming_data(roaming_data)
+  ret_data <- left_join(ret_data, roaming_data_tmp, by="CONTRACT_KEY")
+  ret_data$SESSIONS_206[is.na(ret_data$SESSIONS_206)] = 0
+  ret_data$SESSIONS_207[is.na(ret_data$SESSIONS_207)] = 0
+  ret_data$SESSIONS_208[is.na(ret_data$SESSIONS_208)] = 0
+  ret_data$SESSIONS_209[is.na(ret_data$SESSIONS_209)] = 0
+  ret_data$SESSIONS_210[is.na(ret_data$SESSIONS_210)] = 0
+  ret_data$USAGE_206[is.na(ret_data$USAGE_206)] = 0
+  ret_data$USAGE_207[is.na(ret_data$USAGE_207)] = 0
+  ret_data$USAGE_208[is.na(ret_data$USAGE_208)] = 0
+  ret_data$USAGE_209[is.na(ret_data$USAGE_209)] = 0
+  ret_data$USAGE_210[is.na(ret_data$USAGE_210)] = 0
   
   ret_data <- ret_data %>% dplyr::select(-HANDSET_NAME,-RATE_PLAN, -X)
   
@@ -66,7 +93,11 @@ prepare_dataset <- function(data) {
   
   if("TARGET.1" %in% names(ret_data)){
     ret_data <- ret_data %>% mutate(TARGET=as.factor(TARGET.1)) %>% dplyr::select(-TARGET.1,-TARGET.0)
+    
+    levels(ret_data$TARGET) <- make.names(levels(factor(ret_data$TARGET)))
   }
+  
+  
   
   return(ret_data)
 }
@@ -78,7 +109,7 @@ train_transformed_data %>%str
 ```
 
 ```{r}
-m <- train_model(train_transformed_data %>% sample_n(10000), "gbm")
+m <- train_model(train_transformed_data %>% sample_n(10000), "J48", NULL)
 auc(as.numeric(m$pred$obs), as.numeric(m$pred$pred))
 #submission <- predict_and_create_submission(m, test_transformed_data)
 ```
