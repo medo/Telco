@@ -10,6 +10,7 @@ library(dplyr)
 library(knitr)
 library(caret)
 library(corrgram)
+library(pROC)
 ```
 
 ```{r}
@@ -25,38 +26,20 @@ train_data <- train_data %>% mutate(TARGET=as.factor(TARGET))
 
 ```{r}
 fitControl <- trainControl(method = "repeatedcv",
-                           number = 10,
+                           number = 3,
                            repeats = 1,
                            savePredictions = TRUE
                           )
 
 train_model <- function(data, method){
-  model <- train(data %>% select(-TARGET) %>% select(-CONTRACT_KEY), (data %>% select(TARGET))[,1], method=method, trControl = fitControl)
+
+  model <- train(data %>% dplyr::select(-TARGET,-CONTRACT_KEY), (data %>% dplyr::select(TARGET))[,1], method=method, trControl = fitControl)
 }
-
-evaluate_performance <- function(predicted, actual) {
-  cmat <- confusionMatrix(predicted, actual)$table
-
-  TP <- cmat[1,1]
-  FN <- cmat[1,2]
-  FP <- cmat[2,1]
-  TN <- cmat[2,2]
-
-  ret <- list(
-    Accuracy = (TP+TN)/(TP+FN+FP+TN),
-    Precision = (TP/(TP+FP)),
-    Recall = (TP/(TP+FN))
-  )
-
-  ret$F1 <- (2*ret$Precision*ret$Recall)/(ret$Precision + ret$Recall)
-  return(ret)
-}
-
 
 predict_and_create_submission <- function(model, test_data){
   
   test_data_without_contract_key <- test_data %>% select(-CONTRACT_KEY)
-  CONTRACT_KEYS <- test_data %>% select(CONTRACT_KEY)
+  CONTRACT_KEYS <- test_data %>% dplyr::select(CONTRACT_KEY)
   predictions <- predict(model, test_data_without_contract_key)
   
   submission <- data.frame(
@@ -68,13 +51,12 @@ predict_and_create_submission <- function(model, test_data){
   
   return(submission)
 }
-
 ```
 
 ```{r}
-m <- train_model(train_data %>% sample_n(10000), "rf")
-evaluate_performance(m$pred$pred, m$pred$obs)
-submission <- predict_and_create_submission(m, test_data)
+m <- train_model(train_data %>% sample_n(10000), "gbm")
+auc(as.numeric(m$pred$obs), as.numeric(m$pred$pred))
+#submission <- predict_and_create_submission(m, test_data)
 ```
 
 ```{r}
