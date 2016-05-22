@@ -11,6 +11,7 @@ library(knitr)
 library(caret)
 library(corrgram)
 library(pROC)
+library(plyr)
 ```
 
 ```{r}
@@ -18,7 +19,6 @@ roaming_data <- read.csv("data/roaming_monthly.csv")
 contract_data <- read.csv("data/contract_clean.csv")
 test_data <- read.csv("data/test.csv")
 train_data <- read.csv("data/train.csv")
-roaming_data <- read.csv("data/roaming_monthly.csv")
 daily_aggregate <- read.csv("data/daily_aggregate.csv")
 
 train_data <- train_data %>% mutate(TARGET=as.factor(TARGET)) 
@@ -30,13 +30,13 @@ fitControl <- trainControl(method = "repeatedcv",
                            repeats = 1,
                            savePredictions = TRUE,
                            classProbs = TRUE,
-                           returnResamp='none',
-                           summaryFunction= twoClassSummary
+                           summaryFunction= twoClassSummary,
+                           returnResamp='none'
                           )
 
 train_model <- function(data, method, grid){
 
-  model <- train(data %>% dplyr::select(-TARGET,-CONTRACT_KEY), (data %>% dplyr::select(TARGET))[,1], method=method, trControl = fitControl, tuneGrid = grid, metric="ROC",  preProc = c("center", "scale"))
+  model <- train(data %>% dplyr::select(-TARGET,-CONTRACT_KEY), (data %>% dplyr::select(TARGET))[,1], method=method, trControl = fitControl, tuneGrid = grid, metric="ROC", verbose=F)
 }
 
 predict_and_create_submission <- function(model, test_data){
@@ -54,6 +54,20 @@ predict_and_create_submission <- function(model, test_data){
   
   return(submission)
 }
+
+evaluate_on_all_models <- function(data) {
+  return(c("nb", "rf", "gbm", "treebag") %>% lapply(function(algo){
+    print(algo)
+    m <- train_model(data , algo, NULL)
+    auc <- auc(as.numeric(m$pred$obs), as.numeric(m$pred$pred))
+    print(auc)
+    
+    return(list(
+      model = m,
+      auc = auc
+    ))
+  }))
+}
 ```
 
 ```{r}
@@ -67,40 +81,45 @@ prepare_roaming_data <- function(data){
 ```
 
 ```{r}
+train_data <- train_data %>% sample_n(10000)
+```
+
+```{r}
 prepare_dataset <- function(data) {
   
   # Adding contract data
   ret_data <- inner_join(data, contract_data, by="CONTRACT_KEY") 
   
   # Adding roaming data
-  roaming_data_tmp <- prepare_roaming_data(roaming_data)
-  ret_data <- left_join(ret_data, roaming_data_tmp, by="CONTRACT_KEY")
-  ret_data$SESSIONS_206[is.na(ret_data$SESSIONS_206)] = 0
-  ret_data$SESSIONS_207[is.na(ret_data$SESSIONS_207)] = 0
-  ret_data$SESSIONS_208[is.na(ret_data$SESSIONS_208)] = 0
-  ret_data$SESSIONS_209[is.na(ret_data$SESSIONS_209)] = 0
-  ret_data$SESSIONS_210[is.na(ret_data$SESSIONS_210)] = 0
-  ret_data$USAGE_206[is.na(ret_data$USAGE_206)] = 0
-  ret_data$USAGE_207[is.na(ret_data$USAGE_207)] = 0
-  ret_data$USAGE_208[is.na(ret_data$USAGE_208)] = 0
-  ret_data$USAGE_209[is.na(ret_data$USAGE_209)] = 0
-  ret_data$USAGE_210[is.na(ret_data$USAGE_210)] = 0
+  #roaming_data_tmp <- prepare_roaming_data(roaming_data)
+  #ret_data <- left_join(ret_data, roaming_data_tmp, by="CONTRACT_KEY")
+  #ret_data$SESSIONS_206[is.na(ret_data$SESSIONS_206)] = 0
+  #ret_data$SESSIONS_207[is.na(ret_data$SESSIONS_207)] = 0
+  #ret_data$SESSIONS_208[is.na(ret_data$SESSIONS_208)] = 0
+  #ret_data$SESSIONS_209[is.na(ret_data$SESSIONS_209)] = 0
+  #ret_data$SESSIONS_210[is.na(ret_data$SESSIONS_210)] = 0
+  #ret_data$USAGE_206[is.na(ret_data$USAGE_206)] = 0
+  #ret_data$USAGE_207[is.na(ret_data$USAGE_207)] = 0
+  #ret_data$USAGE_208[is.na(ret_data$USAGE_208)] = 0
+  #ret_data$USAGE_209[is.na(ret_data$USAGE_209)] = 0
+  #ret_data$USAGE_210[is.na(ret_data$USAGE_210)] = 0
   
   
-  ret_data <- ret_data %>% dplyr::select(-HANDSET_NAME, -X)
+  ret_data <- ret_data %>% dplyr::select(-HANDSET_NAME, -RATE_PLAN, -VALUE_SEGMENT, -GENDER, -X)
   
   # One hot encoding
   ret_dummy <- dummyVars("~.", data=ret_data, fullRank=F)
   ret_data <- as.data.frame(predict(ret_dummy, ret_data))
   
-  
   # Adding Some cols
   ret_data <- ret_data %>% mutate(USAGE_DIFF=X210_USAGE-X206_USAGE)
+  ret_data <- ret_data %>% mutate(USAGE_EXPECTED=(X210_USAGE-X206_USAGE)/5 + X210_USAGE)
+  ret_data <- ret_data %>% mutate(USAGE_MEAN=(X206_USAGE+X207_USAGE+X208_USAGE+X209_USAGE+X210_USAGE)/5)
   
   # Drop UNNEEDED COLUMNS/ Highly correlated
   ret_data <- ret_data %>% dplyr::select(-ends_with("_SESSION_COUNT"))
-  ret_data <- ret_data %>% dplyr::select(-starts_with("SESSIONS_"))
-  ret_data <- ret_data %>% dplyr::select(-GENDER.F)
+  ret_data <- ret_data %>% dplyr::select(-matches("X2"))
+  
   
   if("TARGET.1" %in% names(ret_data)){
     ret_data <- ret_data %>% mutate(TARGET=as.factor(TARGET.1)) %>% dplyr::select(-TARGET.1,-TARGET.0)
@@ -119,8 +138,7 @@ train_transformed_data %>%str
 ```
 
 ```{r}
-m <- train_model(train_transformed_data %>% sample_n(20000) , "gbm", NULL)
-auc(as.numeric(m$pred$obs), as.numeric(m$pred$pred))
+models <- evaluate_on_all_models(train_transformed_data)
 #submission <- predict_and_create_submission(m, test_transformed_data)
 ```
 
