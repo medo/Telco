@@ -45,6 +45,8 @@ predict_and_create_submission <- function(model, test_data){
   CONTRACT_KEYS <- test_data %>% dplyr::select(CONTRACT_KEY)
   predictions <- predict(model, test_data_without_contract_key)
   
+  predictions <- predictions %>% sapply(function(x){return(ifelse(x == "X0", 0,1))})
+  
   submission <- data.frame(
     CONTRACT_KEY = CONTRACT_KEYS,
     PREDICTED_TARGET = predictions
@@ -56,7 +58,8 @@ predict_and_create_submission <- function(model, test_data){
 }
 
 evaluate_on_all_models <- function(data) {
-  return(c("nb", "rf", "gbm", "treebag") %>% lapply(function(algo){
+  
+  return(c("gbm", "treebag", "nb", "rf") %>% lapply(function(algo){
     print(algo)
     m <- train_model(data , algo, NULL)
     auc <- auc(as.numeric(m$pred$obs), as.numeric(m$pred$pred))
@@ -87,8 +90,9 @@ train_data <- train_data %>% sample_n(10000)
 ```{r}
 prepare_dataset <- function(data) {
   
+  ret_data <- data
   # Adding contract data
-  ret_data <- inner_join(data, contract_data, by="CONTRACT_KEY") 
+  #ret_data <- inner_join(data, contract_data, by="CONTRACT_KEY") 
   
   # Adding roaming data
   #roaming_data_tmp <- prepare_roaming_data(roaming_data)
@@ -105,11 +109,10 @@ prepare_dataset <- function(data) {
   #ret_data$USAGE_210[is.na(ret_data$USAGE_210)] = 0
   
   
-  ret_data <- ret_data %>% dplyr::select(-HANDSET_NAME, -RATE_PLAN, -VALUE_SEGMENT, -GENDER, -X)
+  #ret_data <- ret_data %>% dplyr::select(-GENDER, -X, -RATE_PLAN, -HANDSET_NAME)
   
   # One hot encoding
-  ret_dummy <- dummyVars("~.", data=ret_data, fullRank=F)
-  ret_data <- as.data.frame(predict(ret_dummy, ret_data))
+  #ret_data <- model.matrix(~. -1, data=ret_data, fullRank=F) %>% as.data.frame
   
   # Adding Some cols
   ret_data <- ret_data %>% mutate(USAGE_DIFF=X210_USAGE-X206_USAGE)
@@ -118,14 +121,15 @@ prepare_dataset <- function(data) {
   
   # Drop UNNEEDED COLUMNS/ Highly correlated
   ret_data <- ret_data %>% dplyr::select(-ends_with("_SESSION_COUNT"))
+  #ret_data <- ret_data %>% dplyr::select(-starts_with("SESSIONS_"))
   ret_data <- ret_data %>% dplyr::select(-matches("X2"))
   
   
-  if("TARGET.1" %in% names(ret_data)){
-    ret_data <- ret_data %>% mutate(TARGET=as.factor(TARGET.1)) %>% dplyr::select(-TARGET.1,-TARGET.0)
-    
-    levels(ret_data$TARGET) <- make.names(levels(factor(ret_data$TARGET)))
+  if("TARGET1" %in% names(ret_data)){
+    ret_data <- ret_data %>% mutate(TARGET=as.factor(TARGET1)) %>% dplyr::select(-TARGET1,-TARGET0)
   }
+  
+  levels(ret_data$TARGET) <- make.names(levels(factor(ret_data$TARGET)))
   
   
   return(ret_data)
@@ -138,8 +142,10 @@ train_transformed_data %>%str
 ```
 
 ```{r}
-models <- evaluate_on_all_models(train_transformed_data)
-#submission <- predict_and_create_submission(m, test_transformed_data)
+#models <- evaluate_on_all_models(train_transformed_data)
+m <- train_model(train_transformed_data , "gbm", NULL)
+auc <- auc(as.numeric(m$pred$obs), as.numeric(m$pred$pred))
+submission <- predict_and_create_submission(m, test_transformed_data)
 ```
 
 ```{r}
