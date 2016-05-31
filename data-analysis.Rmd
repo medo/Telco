@@ -31,7 +31,8 @@ fitControl <- trainControl(method = "repeatedcv",
                            savePredictions = TRUE,
                            classProbs = TRUE,
                            summaryFunction= twoClassSummary,
-                           returnResamp='none'
+                           returnResamp='none',
+                           allowParallel = TRUE
                           )
 
 train_model <- function(data, method, grid){
@@ -59,7 +60,7 @@ predict_and_create_submission <- function(model, test_data){
 
 evaluate_on_all_models <- function(data) {
   
-  return(c("gbm", "treebag", "nb", "rf") %>% lapply(function(algo){
+  return(c("xgbTree", "gbm", "treebag", "nb", "rf") %>% lapply(function(algo){
     print(algo)
     m <- train_model(data , algo, NULL)
     auc <- auc(as.numeric(m$pred$obs), as.numeric(m$pred$pred))
@@ -84,15 +85,14 @@ prepare_roaming_data <- function(data){
 ```
 
 ```{r}
-train_data <- train_data %>% sample_n(10000)
+train_data <- train_data %>% sample_n(100)
 ```
 
 ```{r}
-prepare_dataset <- function(data) {
+prepare_dataset <- function(data, is_train) {
   
-  ret_data <- data
   # Adding contract data
-  #ret_data <- inner_join(data, contract_data, by="CONTRACT_KEY") 
+  ret_data <- inner_join(data, contract_data, by="CONTRACT_KEY") 
   
   # Adding roaming data
   #roaming_data_tmp <- prepare_roaming_data(roaming_data)
@@ -109,10 +109,13 @@ prepare_dataset <- function(data) {
   #ret_data$USAGE_210[is.na(ret_data$USAGE_210)] = 0
   
   
-  #ret_data <- ret_data %>% dplyr::select(-GENDER, -X, -RATE_PLAN, -HANDSET_NAME)
+  ret_data <- ret_data %>% dplyr::select(-X, -HANDSET_NAME, -RATE_PLAN)
+  
+  # FIXING THE AGE
+  ret_data[ret_data$AGE == 99,]$AGE <- (ret_data[ret_data$AGE != 99,]$AGE %>% median)
   
   # One hot encoding
-  #ret_data <- model.matrix(~. -1, data=ret_data, fullRank=F) %>% as.data.frame
+  ret_data <- model.matrix(~. -1, data=ret_data, fullRank=F) %>% as.data.frame
   
   # Adding Some cols
   ret_data <- ret_data %>% mutate(USAGE_DIFF=X210_USAGE-X206_USAGE)
@@ -120,32 +123,35 @@ prepare_dataset <- function(data) {
   ret_data <- ret_data %>% mutate(USAGE_MEAN=(X206_USAGE+X207_USAGE+X208_USAGE+X209_USAGE+X210_USAGE)/5)
   
   # Drop UNNEEDED COLUMNS/ Highly correlated
-  ret_data <- ret_data %>% dplyr::select(-ends_with("_SESSION_COUNT"))
+  #ret_data <- ret_data %>% dplyr::select(-ends_with("_SESSION_COUNT"))
   #ret_data <- ret_data %>% dplyr::select(-starts_with("SESSIONS_"))
-  ret_data <- ret_data %>% dplyr::select(-matches("X2"))
+  #ret_data <- ret_data %>% dplyr::select(-matches("X2"))
+  
+  # Removing Outliers from train data
+  if(is_train){
+    ret_data <- ret_data %>% filter(USAGE_MEAN <= 15000)
+  }
   
   
   if("TARGET1" %in% names(ret_data)){
     ret_data <- ret_data %>% mutate(TARGET=as.factor(TARGET1)) %>% dplyr::select(-TARGET1,-TARGET0)
+    levels(ret_data$TARGET) <- make.names(levels(factor(ret_data$TARGET)))
   }
-  
-  levels(ret_data$TARGET) <- make.names(levels(factor(ret_data$TARGET)))
-  
   
   return(ret_data)
 }
 
-train_transformed_data <- prepare_dataset(train_data)
-test_transformed_data <- prepare_dataset(test_data)
+train_transformed_data <- prepare_dataset(train_data, TRUE)
+test_transformed_data <- prepare_dataset(test_data, FALSE)
 
 train_transformed_data %>%str
 ```
 
 ```{r}
-#models <- evaluate_on_all_models(train_transformed_data)
-m <- train_model(train_transformed_data , "gbm", NULL)
-auc <- auc(as.numeric(m$pred$obs), as.numeric(m$pred$pred))
-submission <- predict_and_create_submission(m, test_transformed_data)
+models <- evaluate_on_all_models(train_transformed_data)
+#m <- train_model(train_transformed_data , "gbm", NULL)
+#auc <- auc(as.numeric(m$pred$obs), as.numeric(m$pred$pred))
+#submission <- predict_and_create_submission(m, test_transformed_data)
 ```
 
 ```{r}
