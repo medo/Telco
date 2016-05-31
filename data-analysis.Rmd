@@ -12,6 +12,7 @@ library(caret)
 library(corrgram)
 library(pROC)
 library(plyr)
+library(caretEnsemble)
 ```
 
 ```{r}
@@ -25,19 +26,51 @@ train_data <- train_data %>% mutate(TARGET=as.factor(TARGET))
 ```
 
 ```{r}
-fitControl <- trainControl(method = "repeatedcv",
+
+fitControl1 <- trainControl(method = "repeatedcv",
                            number = 3,
                            repeats = 1,
-                           savePredictions = TRUE,
+                           savePredictions = "final",
                            classProbs = TRUE,
                            summaryFunction= twoClassSummary,
-                           returnResamp='none',
+                           returnResamp='final',
                            allowParallel = TRUE
                           )
 
-train_model <- function(data, method, grid){
+fitControl2 <- trainControl(method = "boot",
+                           number = 25,
+                           savePredictions = "final",
+                           classProbs = TRUE,
+                           summaryFunction= twoClassSummary,
+                           allowParallel = TRUE
+                          )
+ensembleControl <- trainControl(
+      number=2,
+      summaryFunction=twoClassSummary,
+      classProbs=TRUE,
+      savePredictions = "final"
+    )
 
-  model <- train(data %>% dplyr::select(-TARGET,-CONTRACT_KEY), (data %>% dplyr::select(TARGET))[,1], method=method, trControl = fitControl, tuneGrid = grid, metric="ROC", verbose=F, preProcess=c( "center", "scale"))
+train_model <- function(data){
+
+  models <- caretList(
+    x=(data %>% dplyr::select(-TARGET,-CONTRACT_KEY)),
+    y=(data %>% dplyr::select(TARGET))[,1],
+    metric="ROC",
+    preProcess=c( "center", "scale"),
+    verbose=F,
+    #methodList=c("nb", "treebag", "rf", "xgbTree", "gbm"),
+    methodList=c("nb", "treebag", "rf"),
+    trControl = fitControl2
+  )
+  
+  ens <- caretEnsemble(
+    models,
+    metric="ROC",
+    trControl= ensembleControl
+  )
+  
+  return(ens)
 }
 
 predict_and_create_submission <- function(model, test_data){
@@ -58,31 +91,8 @@ predict_and_create_submission <- function(model, test_data){
   return(submission)
 }
 
-evaluate_on_all_models <- function(data) {
-  
-  return(c("nb", "treebag", "rf", "xgbTree", "gbm", "rf") %>% lapply(function(algo){
-    print(algo)
-    m <- train_model(data , algo, NULL)
-    auc <- auc(as.numeric(m$pred$obs), as.numeric(m$pred$pred))
-    print(auc)
-    
-    return(list(
-      model = m,
-      auc = auc
-    ))
-  }))
-}
 ```
 
-```{r}
-prepare_roaming_data <- function(data){
-  
-  ret_data <- data %>% mutate(CALL_MONTH_KEY=paste("USAGE_", CALL_MONTH_KEY, sep="")) %>% spread(CALL_MONTH_KEY, USAGE, 0) %>% mutate(SESSIONS_206 = ifelse(USAGE_206 > 0, SESSION_COUNT, 0),SESSIONS_207 = ifelse(USAGE_207 > 0, SESSION_COUNT, 0),SESSIONS_208 = ifelse(USAGE_208 > 0, SESSION_COUNT, 0),SESSIONS_209 = ifelse(USAGE_209 > 0, SESSION_COUNT, 0),SESSIONS_210 = ifelse(USAGE_210 > 0, SESSION_COUNT, 0)) %>% ddply(.(CONTRACT_KEY), summarize, USAGE_206=sum(USAGE_206), USAGE_207=sum(USAGE_207), USAGE_208=sum(USAGE_208), USAGE_209=sum(USAGE_209), USAGE_210=sum(USAGE_210), SESSIONS_206=sum(SESSIONS_206), SESSIONS_207=sum(SESSIONS_207), SESSIONS_208=sum(SESSIONS_208), SESSIONS_209=sum(SESSIONS_209), SESSIONS_210=sum(SESSIONS_210))
-  
-  return(ret_data)
-}
-
-```
 
 ```{r}
 train_data <- train_data %>% sample_n(20000)
@@ -148,10 +158,10 @@ prepare_dataset <- function(data, is_train) {
   
   # Removing Outliers from train data
   if(is_train){
-  #  ret_data <- ret_data %>% filter(USAGE_MEAN <= 15000)
+    ret_data <- ret_data %>% filter(USAGE_MEAN <= 15000)
   }
   
-  # Drop UNNEEDED COLUMNS/ Highly correlated
+  # Drop UNNEEDED COLUMNS
   #ret_data <- ret_data %>% dplyr::select(-ends_with("_SESSION_COUNT"))
   #ret_data <- ret_data %>% dplyr::select(-starts_with("SESSIONS_"))
   #ret_data <- ret_data %>% dplyr::select(-matches("X2"))
@@ -171,6 +181,7 @@ prepare_dataset <- function(data, is_train) {
   highlyCorDescr <- findCorrelation(descrCor, cutoff = .90, names=TRUE)
   ret_data <- ret_data %>% dplyr::select(-one_of(highlyCorDescr))
   
+  # Removing linearly corelated values
   ret_data <- ret_data[, -findLinearCombos(ret_data %>% dplyr::select(-one_of(c("TARGET"))))$remove]
   
   return(ret_data)
@@ -183,16 +194,37 @@ train_transformed_data %>%str
 ```
 
 ```{r}
-models <- evaluate_on_all_models(train_transformed_data)
-#m <- train_model(train_transformed_data , "gbm", NULL)
+ens <- train_model(train_transformed_data)
+models <- ens$models
+models %>% sapply(function(x){
+  auc(as.numeric(x$pred$obs), as.numeric(x$pred$pred))
+})
+print("The ensambled models :")
+auc(as.numeric(ens$ens_model$pred$obs), as.numeric(ens$ens_model$pred$pred))
+
+#m <- train_model(train_transformed_data , "gbm")
 #auc <- auc(as.numeric(m$pred$obs), as.numeric(m$pred$pred))
 #submission <- predict_and_create_submission(m, test_transformed_data)
 ```
 
+
+
+# NOT IMPORTANT FOR NOW
 ```{r}
 tcc <- cor(train_transformed_data %>% dplyr::select(-CONTRACT_KEY) %>% mutate(TARGET=as.numeric(TARGET)))
 corrplot::corrplot(tcc)
 
 # Feature Correlation with target
 (tcc["TARGET", ] %>% as.list)[order(unlist(tcc["TARGET", ] %>% as.list),decreasing=TRUE)]
+```
+
+
+```{r}
+prepare_roaming_data <- function(data){
+  
+  ret_data <- data %>% mutate(CALL_MONTH_KEY=paste("USAGE_", CALL_MONTH_KEY, sep="")) %>% spread(CALL_MONTH_KEY, USAGE, 0) %>% mutate(SESSIONS_206 = ifelse(USAGE_206 > 0, SESSION_COUNT, 0),SESSIONS_207 = ifelse(USAGE_207 > 0, SESSION_COUNT, 0),SESSIONS_208 = ifelse(USAGE_208 > 0, SESSION_COUNT, 0),SESSIONS_209 = ifelse(USAGE_209 > 0, SESSION_COUNT, 0),SESSIONS_210 = ifelse(USAGE_210 > 0, SESSION_COUNT, 0)) %>% ddply(.(CONTRACT_KEY), summarize, USAGE_206=sum(USAGE_206), USAGE_207=sum(USAGE_207), USAGE_208=sum(USAGE_208), USAGE_209=sum(USAGE_209), USAGE_210=sum(USAGE_210), SESSIONS_206=sum(SESSIONS_206), SESSIONS_207=sum(SESSIONS_207), SESSIONS_208=sum(SESSIONS_208), SESSIONS_209=sum(SESSIONS_209), SESSIONS_210=sum(SESSIONS_210))
+  
+  return(ret_data)
+}
+
 ```
