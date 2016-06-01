@@ -31,10 +31,13 @@ train_model <- function(data, methods){
     y= t$class,
     metric="ROC",
     preProcess=c( "center", "scale"),
-    methodList = methods,
+    tuneList = list(
+      nb= caretModelSpec(method="nb"),
+      knn= caretModelSpec(method="knn")
+    ),
     continue_on_fail = T,
     trControl = trainControl(method = "repeatedcv",
-                             number=5,
+                             number=10,
                              repeats = 3 ,
                              classProbs = TRUE,
                              savePredictions = "final",
@@ -65,31 +68,47 @@ predict_and_create_submission <- function(model, test_data){
 }
 ```
 
+```{r eval=FALSE}
+#ONLY USED ONCE TO CREATE THE USAGE ESTIMATED COLUMN
 
-```{r}
-roaming_data <- read.csv("data/roaming_monthly.csv")
-contract_data <- read.csv("data/contract_clean.csv")
-test_data <- read.csv("data/test.csv")
-train_data <- read.csv("data/train.csv")
-daily_aggregate <- read.csv("data/daily_aggregate.csv")
+calculate_month_estimate <- function(u1,u2,u3,u4,u5){
+  d <- data.frame(
+    x = (1:5),
+    y =c(u1,u2,u3,u4,u5)
+  )
+  p <- predict(lm(y~x, data=d), data.frame(x=c(6)))[[1]]
+  return(p)
+}
 
-full_train_data <- inner_join(train_data, contract_data, by="CONTRACT_KEY") 
-full_train_data <- full_train_data %>% dplyr::select(-X)
-full_train_data <- model.matrix(~. -1, data=full_train_data, fullRank=F) %>% as.data.frame
-full_train_data <- full_train_data %>% mutate(TARGET=as.factor(TARGET))
-levels(full_train_data$TARGET) <- make.names(levels(factor(full_train_data$TARGET)))
+train_es <- train_data %>% rowwise() %>% do(ES=calculate_month_estimate(.$X206_USAGE, .$X207_USAGE, .$X208_USAGE, .$X209_USAGE,.$X210_USAGE)) %>% summarise(ES=ES)
+train_es <- data.frame(ES = train_es$ES %>% unlist)
+write.csv(train_es, quote=FALSE,row.names=FALSE, file="./data/train_estimated.csv")
 
-
-full_test_data <- inner_join(test_data, contract_data, by="CONTRACT_KEY") 
-full_test_data <- full_test_data %>% dplyr::select(-X)
-full_test_data <- model.matrix(~. -1, data=full_test_data, fullRank=F) %>% as.data.frame
+test_es <- test_data %>% rowwise() %>% do(ES=calculate_month_estimate(.$X206_USAGE, .$X207_USAGE, .$X208_USAGE, .$X209_USAGE,.$X210_USAGE)) %>% summarise(ES=ES)
+test_es <- data.frame(ES = test_es$ES %>% unlist)
+write.csv(test_es, quote=FALSE,row.names=FALSE, file="./data/test_estimated.csv")
 ```
 
 
 ```{r}
-strain_data <- full_train_data
-parts <- createDataPartition(strain_data$TARGET, p=0.3, list=F)
-strain_data <- strain_data[parts,]
+#roaming_data <- read.csv("data/roaming_monthly.csv")
+contract_data <- read.csv("data/contract_clean.csv")
+test_data <- read.csv("data/test.csv")
+train_data <- read.csv("data/train.csv")
+#daily_aggregate <- read.csv("data/daily_aggregate.csv")
+train_estimate_data <- read.csv("data/train_estimated.csv")
+train_data$ES <- train_estimate_data$ES
+test_estimate_data <- read.csv("data/test_estimated.csv")
+test_data$ES <- test_estimate_data$ES
+rm(train_estimate_data)
+rm(test_estimate_data)
+```
+
+
+```{r}
+parts <- createDataPartition(train_data$TARGET, p=0.75, list=F)
+validate_data <- train_data[-parts,]
+train_data <- train_data[parts,]
 rm(parts)
 ```
 
@@ -97,6 +116,10 @@ rm(parts)
 ```{r}
 prepare_dataset <- function(data, is_train) {
   ret_data <- data
+  
+  ret_data <- inner_join(ret_data, contract_data, by="CONTRACT_KEY") 
+  ret_data <- ret_data %>% dplyr::select(-X, -HANDSET_NAME)
+  ret_data <- model.matrix(~. -1, data=ret_data, fullRank=F) %>% as.data.frame
   
   # FIXING THE AGE
   ret_data[ret_data$AGE == 99,]$AGE <- (ret_data[ret_data$AGE != 99,]$AGE %>% median)
@@ -107,8 +130,12 @@ prepare_dataset <- function(data, is_train) {
   ret_data <- ret_data %>% mutate(USAGE_MEAN=(X206_USAGE+X207_USAGE+X208_USAGE+X209_USAGE+X210_USAGE)/5)
   
   if(is_train){
+    
+    ret_data <- ret_data %>% mutate(TARGET=as.factor(TARGET))
+    levels(ret_data$TARGET) <- make.names(levels(factor(ret_data$TARGET)))
+    
     # Drop UNNEEDED COLUMNS
-    #ret_data <- ret_data %>% dplyr::select(-ends_with("_SESSION_COUNT"))
+    ret_data <- ret_data %>% dplyr::select(-ends_with("_SESSION_COUNT"))
     #ret_data <- ret_data %>% dplyr::select(-starts_with("SESSIONS_"))
     #ret_data <- ret_data %>% dplyr::select(-matches("X2"))
     
@@ -119,37 +146,51 @@ prepare_dataset <- function(data, is_train) {
     ret_data <- ret_data %>% dplyr::select(-one_of(nzv))
     
     # Removing highly correlated features
-    descrCor <- cor(ret_data %>% dplyr::select(-TARGET))
-    highlyCorDescr <- findCorrelation(descrCor, cutoff = .90, names=TRUE)
-    ret_data <- ret_data %>% dplyr::select(-one_of(highlyCorDescr))
+    #descrCor <- cor(ret_data %>% dplyr::select(-TARGET))
+    #highlyCorDescr <- findCorrelation(descrCor, cutoff = .90, names=TRUE)
+    #ret_data <- ret_data %>% dplyr::select(-one_of(highlyCorDescr))
     
     # Removing linearly corelated values
-    lc <- findLinearCombos(ret_data %>% dplyr::select(-TARGET))
+    #lc <- findLinearCombos(ret_data %>% dplyr::select(-TARGET))
     
-    if(!is.null(lc$remove)){
-      ret_data <- ret_data[, -lc$remove]
-    }
+    #if(!is.null(lc$remove)){
+    #  ret_data <- ret_data[, -lc$remove]
+    #}
   }
   
   return(ret_data)
 }
 
-train_transformed_data <- prepare_dataset(strain_data, TRUE)
-test_transformed_data <- prepare_dataset(full_test_data, FALSE)
+train_transformed_data <- prepare_dataset(train_data, TRUE)
+test_transformed_data <- prepare_dataset(test_data, FALSE)
 test_transformed_data <- test_transformed_data[, names(test_transformed_data) %in% (train_transformed_data %>% names)]
+
+validate_transformed_data <- prepare_dataset(validate_data, FALSE)
+validate_transformed_data <- validate_transformed_data[, names(validate_transformed_data) %in% (train_transformed_data %>% names)]
+validate_transformed_data <- validate_transformed_data %>% mutate(TARGET=as.factor(TARGET))
+levels(validate_transformed_data$TARGET) <- make.names(levels(factor(validate_transformed_data$TARGET)))
 
 train_transformed_data %>%str
 ```
 
 
 ```{r}
-models <- train_model(train_transformed_data, c("nb","rf", "knn", "glm","xgbTree", "gbm"))
+models <- train_model(train_transformed_data)
 #p <- predict(models$nb, train_transformed_data %>% dplyr::select(-TARGET,-CONTRACT_KEY))
 
 models %>% sapply(function(x){
   print(x$method)
-  print(auc(as.numeric(x$pred$obs), as.numeric(x$pred$pred)))
+  p <- predict(x, validate_transformed_data %>% dplyr::select(-TARGET,-CONTRACT_KEY))
+  print(auc(as.numeric(validate_transformed_data$TARGET), as.numeric(p)))
 })
+
+stackControl <- trainControl(method="repeatedcv", number=5, repeats=3, savePredictions=TRUE, classProbs=TRUE, summaryFunction = twoClassSummary)
+ens <- caretStack(models, metric="ROC", trControl=stackControl, method="glm")
+
+p <- predict(ens, validate_transformed_data %>% dplyr::select(-TARGET,-CONTRACT_KEY))
+print(auc(as.numeric(validate_transformed_data$TARGET), as.numeric(p)))
+
+modelCor(resamples(models))
 
 submission <- predict_and_create_submission(models$nb, test_transformed_data)
 ```
