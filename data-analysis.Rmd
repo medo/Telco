@@ -12,12 +12,13 @@ library(caret)
 library(corrgram)
 library(pROC)
 library(plyr)
+library(caretEnsemble)
 library(doMC)
 registerDoMC(cores = 4)
 ```
 
 ```{r}
-train_model <- function(data, method){
+train_model <- function(data, methods){
   
   t <- list(
     obs= data %>% dplyr::select(-TARGET,-CONTRACT_KEY),
@@ -25,13 +26,15 @@ train_model <- function(data, method){
   )
 
   set.seed(1234556)
-  model <- train(
+  models <- caretList(
     x= t$obs,
     y= t$class,
     metric="ROC",
     preProcess=c( "center", "scale"),
-    method=method,
+    methodList = methods,
+    continue_on_fail = T,
     trControl = trainControl(method = "repeatedcv",
+                             number=5,
                              repeats = 3 ,
                              classProbs = TRUE,
                              savePredictions = "final",
@@ -40,7 +43,7 @@ train_model <- function(data, method){
     )
   )
   
-  return(model)
+  return(models)
 }
 
 predict_and_create_submission <- function(model, test_data){
@@ -60,16 +63,6 @@ predict_and_create_submission <- function(model, test_data){
   
   return(submission)
 }
-
-train_many_models <- function(data, models){
-  ret <- models %>% lapply(function(model){
-    m <- train_model(data, model)
-    print(m)
-    return(m)
-  })
-  names(ret) <- models
-  return(ret)
-}
 ```
 
 
@@ -80,27 +73,34 @@ test_data <- read.csv("data/test.csv")
 train_data <- read.csv("data/train.csv")
 daily_aggregate <- read.csv("data/daily_aggregate.csv")
 
-train_data <- train_data %>% mutate(TARGET=as.factor(TARGET)) 
+full_train_data <- inner_join(train_data, contract_data, by="CONTRACT_KEY") 
+full_train_data <- full_train_data %>% dplyr::select(-X)
+full_train_data <- model.matrix(~. -1, data=full_train_data, fullRank=F) %>% as.data.frame
+full_train_data <- full_train_data %>% mutate(TARGET=as.factor(TARGET))
+levels(full_train_data$TARGET) <- make.names(levels(factor(full_train_data$TARGET)))
+
+
+full_test_data <- inner_join(test_data, contract_data, by="CONTRACT_KEY") 
+full_test_data <- full_test_data %>% dplyr::select(-X)
+full_test_data <- model.matrix(~. -1, data=full_test_data, fullRank=F) %>% as.data.frame
 ```
 
+
 ```{r}
-train_data <- train_data %>% sample_n(10000)
+strain_data <- full_train_data
+parts <- createDataPartition(strain_data$TARGET, p=0.3, list=F)
+strain_data <- strain_data[parts,]
+rm(parts)
 ```
 
 
 ```{r}
 prepare_dataset <- function(data, is_train) {
-  
-  # Adding contract data
-  ret_data <- inner_join(data, contract_data, by="CONTRACT_KEY") 
-  
-  ret_data <- ret_data %>% dplyr::select(-X, -HANDSET_NAME)
+  ret_data <- data
   
   # FIXING THE AGE
   ret_data[ret_data$AGE == 99,]$AGE <- (ret_data[ret_data$AGE != 99,]$AGE %>% median)
   
-  # One hot encoding
-  ret_data <- model.matrix(~. -1, data=ret_data, fullRank=F) %>% as.data.frame
   
   # Adding Some cols
   ret_data <- ret_data %>% mutate(USAGE_EXPECTED_1=(X210_USAGE-X206_USAGE)/5 + X210_USAGE)
@@ -112,8 +112,6 @@ prepare_dataset <- function(data, is_train) {
     #ret_data <- ret_data %>% dplyr::select(-starts_with("SESSIONS_"))
     #ret_data <- ret_data %>% dplyr::select(-matches("X2"))
     
-    ret_data <- ret_data %>% mutate(TARGET=as.factor(TARGET1)) %>% dplyr::select(-TARGET1,-TARGET0)
-    levels(ret_data$TARGET) <- make.names(levels(factor(ret_data$TARGET)))
     
     # Removing almost zero variance variables
     nzv <- nearZeroVar(ret_data, names=TRUE)
@@ -136,8 +134,8 @@ prepare_dataset <- function(data, is_train) {
   return(ret_data)
 }
 
-train_transformed_data <- prepare_dataset(train_data, TRUE)
-test_transformed_data <- prepare_dataset(test_data, FALSE)
+train_transformed_data <- prepare_dataset(strain_data, TRUE)
+test_transformed_data <- prepare_dataset(full_test_data, FALSE)
 test_transformed_data <- test_transformed_data[, names(test_transformed_data) %in% (train_transformed_data %>% names)]
 
 train_transformed_data %>%str
@@ -145,10 +143,13 @@ train_transformed_data %>%str
 
 
 ```{r}
-models <- train_many_models(train_transformed_data, c("nb"))
+models <- train_model(train_transformed_data, c("nb","rf", "knn", "glm","xgbTree", "gbm"))
 #p <- predict(models$nb, train_transformed_data %>% dplyr::select(-TARGET,-CONTRACT_KEY))
 
-confusionMatrix(as.numeric(models$nb$pred$pred), as.numeric(models$nb$pred$obs))
-auc(as.numeric(models$nb$pred$obs), as.numeric(models$nb$pred$pred))
-#submission <- predict_and_create_submission(models$nb, test_transformed_data)
+models %>% sapply(function(x){
+  print(x$method)
+  print(auc(as.numeric(x$pred$obs), as.numeric(x$pred$pred)))
+})
+
+submission <- predict_and_create_submission(models$nb, test_transformed_data)
 ```
