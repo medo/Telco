@@ -179,8 +179,8 @@ prepare_dataset_one_hot <- function(data, is_train) {
     
     
     # Removing almost zero variance variables
-    nzv <- nearZeroVar(ret_data, names=TRUE)
-    nzv <- nzv [! nzv %in% c("TARGET")]
+    #nzv <- nearZeroVar(ret_data, names=TRUE)
+    #nzv <- nzv [! nzv %in% c("TARGET")]
     #ret_data <- ret_data %>% dplyr::select(-one_of(nzv))
     
     # Removing highly correlated features
