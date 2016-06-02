@@ -16,7 +16,7 @@
   * https://medo.github.io/Telco/docs/collaboration_2.jpg
   * https://medo.github.io/Telco/docs/collaboration_3.jpg
 * Submissions : https://github.com/medo/Telco/tree/gh-pages/submissions
-* Other Random files:
+* Other Sketches:
   * https://github.com/medo/Telco/blob/gh-pages/Submit.ipynb
-  * https://github.com/medo/Telco/blob/gh-pages/deeplearning.py
+  * Deep Learning Pipeline. Keras over theano running on the GPU : https://github.com/medo/Telco/blob/gh-pages/deeplearning.py
 
