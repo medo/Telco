@@ -9,6 +9,7 @@
   * The daily and contract dataset : https://medo.github.io/Telco/docs/EDA%20daily.html
 * Feature Engineering Document : https://medo.github.io/Telco/docs/feature-engineering.html
 * Validation And Evaluation Document : https://medo.github.io/Telco/docs/validation_and_evaluation.html
+* Setup : https://github.com/medo/Telco/tree/gh-pages/docs/setup.md
 * Model Choice Document : 
 * Teamwork :
   * https://medo.github.io/Telco/docs/collaboration_1.jpg
