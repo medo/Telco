@@ -107,25 +107,25 @@ predict_and_create_submission <- function(model, test_data){
 }
 
 #############################################################################
-
-#ONLY USED ONCE TO CREATE THE USAGE ESTIMATE COLUMN OF THE SIXTH MONTH
-calculate_month_estimate <- function(u1,u2,u3,u4,u5){
-  d <- data.frame(
-    x = (1:5),
-    y =c(u1,u2,u3,u4,u5)
-  )
-  p <- predict(lm(y~x, data=d), data.frame(x=c(6)))[[1]]
-  return(p)
+if(FALSE){
+  #ONLY USED ONCE TO CREATE THE USAGE ESTIMATE COLUMN OF THE SIXTH MONTH
+  calculate_month_estimate <- function(u1,u2,u3,u4,u5){
+    d <- data.frame(
+      x = (1:5),
+      y =c(u1,u2,u3,u4,u5)
+    )
+    p <- predict(lm(y~x, data=d), data.frame(x=c(6)))[[1]]
+    return(p)
+  }
+  
+  train_es <- train_data %>% rowwise() %>% do(ES=calculate_month_estimate(.$X206_USAGE, .$X207_USAGE, .$X208_USAGE, .$X209_USAGE,.$X210_USAGE)) %>% summarise(ES=ES)
+  train_es <- data.frame(ES = train_es$ES %>% unlist)
+  write.csv(train_es, quote=FALSE,row.names=FALSE, file="./data/train_estimated.csv")
+  
+  test_es <- test_data %>% rowwise() %>% do(ES=calculate_month_estimate(.$X206_USAGE, .$X207_USAGE, .$X208_USAGE, .$X209_USAGE,.$X210_USAGE)) %>% summarise(ES=ES)
+  test_es <- data.frame(ES = test_es$ES %>% unlist)
+  write.csv(test_es, quote=FALSE,row.names=FALSE, file="./data/test_estimated.csv")
 }
-
-train_es <- train_data %>% rowwise() %>% do(ES=calculate_month_estimate(.$X206_USAGE, .$X207_USAGE, .$X208_USAGE, .$X209_USAGE,.$X210_USAGE)) %>% summarise(ES=ES)
-train_es <- data.frame(ES = train_es$ES %>% unlist)
-write.csv(train_es, quote=FALSE,row.names=FALSE, file="./data/train_estimated.csv")
-
-test_es <- test_data %>% rowwise() %>% do(ES=calculate_month_estimate(.$X206_USAGE, .$X207_USAGE, .$X208_USAGE, .$X209_USAGE,.$X210_USAGE)) %>% summarise(ES=ES)
-test_es <- data.frame(ES = test_es$ES %>% unlist)
-write.csv(test_es, quote=FALSE,row.names=FALSE, file="./data/test_estimated.csv")
-
 #######################################################################################
 
 # Reading all the needed datasets
