@@ -1,0 +1,137 @@
+---
+title: "Validation and Evaluation Document"
+output: html_document
+---
+
+## Validation And Evaluation
+
+***Note*** We had two pipelines. The first one was in python and the second one was in R. We used the first one for the data exploration and the first set of submissions and then we moved to the R one in the rest of the submissions. Here I'll be describing the R pipeline.
+
+We had multiple ways to train our models. The first is to do a grid search on all the params of the model. Caret has this by default, we need to give it an evaluation metric and technique (e.g. Cross Validation) and it will find the best combination for the params. That how we used to tune our models.
+
+We fixed the seed before each training to get the same resampling for a good comparison of models.
+
+In our case we used to use validation with repated k-folds, but it was taking to much time so we decided to use a less accurate but faster "Leave Group out cross validation". And we tuned the number of repetitions to our needs. We used "ROC" as our metric instead of the defauly "Accuracy" metric as that's what the kaggle score is about (The AUC metric is the area under ROC).
+```{r eval=FALSE}
+train_model_single_tune <- function(data, method, grid){
+  
+  t <- list(
+    obs= data %>% dplyr::select(-TARGET,-CONTRACT_KEY),
+    class= (data %>% dplyr::select(TARGET))[,1]
+  )
+
+  set.seed(1234556)
+  model <- train(
+    x= t$obs,
+    y= t$class,
+    preProcess=c( "center", "scale"),
+    method=method,
+    metric="ROC",
+    trControl = trainControl(method="LGOCV", number=1, classProbs = T, summaryFunction = twoClassSummary, allowParallel = TRUE),
+    tuneGrid = grid
+  )
+  
+  return(model)
+}
+```
+
+The second method was to run a set of models that caret tunes automatically with "ROC". We used this method for quickly testing multiple models on the same data with the same resampling for a fair comparison. We used the library `caretEnsemble` for this. The metric was also the "ROC" and we changed the technique according to our needs.
+
+```{r eval=F}
+train_models <- function(data, methods){
+  
+  t <- list(
+    obs= data %>% dplyr::select(-TARGET,-CONTRACT_KEY),
+    class= (data %>% dplyr::select(TARGET))[,1]
+  )
+
+  set.seed(1234556)
+  models <- caretList(
+    x= t$obs,
+    y= t$class,
+    metric="ROC",
+    preProcess=c( "center", "scale"),
+    tuneList = list(
+      rf= caretModelSpec(method="rf")
+    ),
+    continue_on_fail = T,
+    trControl = trainControl(method = "repeatedcv",
+                             number=5,
+                             repeats = 1 ,
+                             classProbs = TRUE,
+                             savePredictions = "final",
+                             summaryFunction= twoClassSummary,
+                             allowParallel = TRUE
+    )
+  )
+  
+  return(models)
+}
+```
+
+The third and last one was to train a model with certain params that we tuned (or found using grid search). This was the fastest mode. We used this mode after tuning our Naive bayes and we then did the cross validation manually.
+
+```{r eval=F}
+train_model_no_tune <- function(data, method, grid){
+  
+  t <- list(
+    obs= data %>% dplyr::select(-TARGET,-CONTRACT_KEY),
+    class= (data %>% dplyr::select(TARGET))[,1]
+  )
+
+  set.seed(1234556)
+  model <- train(
+    x= t$obs,
+    y= t$class,
+    preProcess=c( "center", "scale"),
+    method=method,
+    trControl = trainControl(method="none",allowParallel = TRUE),
+    tuneGrid = grid
+  )
+  
+  return(model)
+}
+```
+
+The manual cross validation we did was as follows.
+
+* We split the data randomly into train and validation data set.
+* Do the feature engineering.
+* Train the model.
+* Predict on the validation set.
+* Calculate the AUC.
+* Repeat.
+
+```{r eval=F}
+divide_train_data <- function(){
+  set.seed(Sys.time())
+  parts <- createDataPartition(train_data$TARGET, p=0.75, list=F)
+  validate_data <- train_data[-parts,]
+  train_data <- train_data[parts,]
+  rm(parts)
+  
+  train_transformed_data <- prepare_dataset(train_data, TRUE)
+  test_transformed_data <- prepare_dataset(test_data, FALSE)
+  test_transformed_data <- test_transformed_data[, names(test_transformed_data) %in% (train_transformed_data %>% names)]
+  
+  validate_transformed_data <- prepare_dataset(validate_data, FALSE)
+  validate_transformed_data <- validate_transformed_data[, names(validate_transformed_data) %in% (train_transformed_data %>% names)]
+  validate_transformed_data <- validate_transformed_data %>% mutate(TARGET=as.factor(TARGET))
+  levels(validate_transformed_data$TARGET) <- make.names(levels(factor(validate_transformed_data$TARGET)))
+  
+  
+  return(list(
+    train = train_transformed_data,
+    test = test_transformed_data,
+    validate = validate_transformed_data
+  ))
+}
+
+for(i in (1:5)){
+  data <- divide_train_data()
+  nb_model <- train_model_no_tune(data$train, "nb", expand.grid(fL=0, usekernel=T, adjust=1))
+  print(nb_model$method)
+  p <- predict(nb_model, data$validate %>% dplyr::select(-TARGET,-CONTRACT_KEY))
+  print(auc(as.numeric(data$validate$TARGET), as.numeric(p)))
+}
+```
