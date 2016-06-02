@@ -18,5 +18,6 @@
 * Submissions : https://github.com/medo/Telco/tree/gh-pages/submissions
 * Other Sketches:
   * https://github.com/medo/Telco/blob/gh-pages/Submit.ipynb
+  * https://github.com/medo/Telco/blob/gh-pages/sketch.ipynb
   * Deep Learning Pipeline. Keras over theano running on the GPU : https://github.com/medo/Telco/blob/gh-pages/deeplearning.py
 
