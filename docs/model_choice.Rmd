@@ -16,22 +16,34 @@ The models we used are:
 - DecesionTree
 - RandomForest
 - KNN
-- SVM (radial and linear) but it took hours thus we did not evaluate it.
+- SVM (radial and linear).
 - Stocastic Gradient Descent
 - Neural Network (different structures upto 7 layers)
 - GBM
 - AdaBoost
 - XGBtree
-- Ensumbling some of these classifers
+- Ensembling some of these classifers
 - NaiveBayes
 
 In most of the cases naive bayes outperformed all other models. Thus, we decided to go for NaiveBayes and designed our feature engineering to work well with naive bayes.
 
-## Ensembling
+## SVM
+
+The linear SVM did very poorly on the training data. And the radial SVM took more than 7 hours to train and didn't finish so we decided to ignore it.
+
+## KNN
+
+We did a grid search on KNN's params (e.g. K) but they all didn't work as good as the naive bayes.
 
 ## Neural Network
 
-We implemented a 7 layer neural network with 100 neuron in each layer (experimented other structures) using Keras on top of Theano which runs over the GPU (refer to deeplearning.py) We used 500 epochs and 100 as the batch size.The neural network scored Fscore = 0.59 after scaling. 
+We implemented a 7 layer neural network with 100 neuron in each layer (experimented other structures) using Keras on top of Theano which runs over the GPU (refer to `deeplearning.py`) We used 500 epochs and 100 as the batch size.The neural network scored Fscore = 0.59 after scaling. 
+
+## Ensembling
+
+We had three approches for ensembling. The first one was using weighted voting. We ensembled 4 submissions (NaiveBayes, RandomForest, KNN, DecisionTree). NB had the heighest weight as it was the best submission. It scored an f-score of 0.64. The second trial was ORing each prediction as the TARGET=1 was a bit rare. It scored 0.67 which was the same as the NaiveBayes submission. We called it "FarghalClassifier" and it's in `submit.ipynb`. The third trial was using the caret library `caretEnsemble`. We ensembled different models which weren't highly correlated, but the resulted model scored lower than our best models.
+
+Finally, naive bayes started outperforming all the models and it doesn't have many params to tune so there wasn't much room for ensembling.
 
 ## Naive Bayes
 
